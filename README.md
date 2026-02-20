@@ -18,15 +18,6 @@ A lightweight and powerful CLI utility written in C for copying, pasting, deleti
 - Clean exit codes
 
 ---
-
-## 📦 Installation & Compilation Guide
-
-### 1️⃣ Requirements
-
-- GCC compiler
-- Linux (X11 / Wayland clipboard support depending on implementation)
-- Standard C libraries
-
 ## Options :
 | Option          | Description                                    |
 | --------------- | ---------------------------------------------- |
@@ -48,16 +39,39 @@ A lightweight and powerful CLI utility written in C for copying, pasting, deleti
 | `-t, --tail N`     | Copy only last N lines                      |
 | `-m, --max-size N` | Maximum size in bytes (default: 100MB)      |
 
-## Installation process: 
-```bash
-git clone https://github.com/Shaikh-Khizer/Copy.git
-```
+
+## 📦 Installation & Compilation Guide
+
+### 1️⃣ Requirements
+
+- GCC compiler
+- Linux (X11 / Wayland clipboard support depending on implementation)
+- Standard C libraries
 
 ### Check GCC version:
 
 ```bash
 gcc --version
 ```
+### Some optional libraries for good performance: 
+
+```bash
+sudo apt install xclip
+```
+
+```bash
+sudo apt install xsel
+```
+```bash
+sudo apt install wl-clipboard
+```
+
+## Installation process: 
+```bash
+git clone https://github.com/Shaikh-Khizer/Copy.git
+```
+
+
 
 ### Compilation
 ```bash
