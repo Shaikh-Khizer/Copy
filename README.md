@@ -68,5 +68,17 @@ gcc -o copy main.c
 sudo mv copy /usr/local/bin/
 copy -h
 ```
+---
 
+## 📄 License
+
+This project is licensed under the MIT License.  
+See the [LICENSE](LICENSE) file for details.
+
+---
+
+## 👨‍💻 Author
+
+**Shaikh Khizer**  
+Computer Science Student | Penetration Tester
 
