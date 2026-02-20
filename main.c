@@ -770,7 +770,7 @@ int main(int argc, char *argv[]) {
             }
             
             fprintf(stderr, "Error: File name or input required for copy operation\n");
-            fprintf(stderr, "Use 'copycat -h' for help\n");
+            fprintf(stderr, "Use 'copy -h' for help\n");
             return 1;
         }
         
