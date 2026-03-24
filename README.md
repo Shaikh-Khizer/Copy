@@ -53,7 +53,7 @@ A lightweight and powerful CLI utility written in C for copying, pasting, deleti
 ```bash
 gcc --version
 ```
-### Optional libraries but recommended: 
+### Recommended libraries : 
 
 ```bash
 sudo apt install xclip
