@@ -1,7 +1,7 @@
 # Copy v1.1.0
 ### File / Clipboard  (Written in C)
 
-A lightweight and powerful CLI utility written in C for copying, pasting, deleting, and manipulating file or clipboard content directly from the terminal.
+A lightweight and powerful CLI utility written in C for copying, pasting, deleting, and manipulating file or clipboard content directly from the terminal. **Recommended to use `Rust` if linux`**
 
 ---
 
