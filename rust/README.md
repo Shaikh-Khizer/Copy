@@ -7,8 +7,6 @@ macOS support added, binary mode and max-size actually implemented.
 
 - Rust 1.70+ (`curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh`)
 - Linux: `xclip` or `xsel` (X11) **or** `wl-clipboard` (Wayland) — `arboard` picks the right one automatically
-- macOS: nothing extra — uses native `pbcopy`/`pbpaste` via `arboard`
-- Windows: nothing extra — uses WinAPI via `arboard`
 
 ## Build & Install
 
