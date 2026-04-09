@@ -1,17 +1,16 @@
-// copy v2.1.0 — File/Clipboard/Pipe Utility
+// copy v2.2.0 — File/Clipboard/Pipe Utility
 // Target: Kali Linux (X11 + Wayland)
 //
-// ROOT CAUSE FIX: arboard holds clipboard in-process — when the process exits,
-// clipboard dies. On Linux the clipboard owner must keep running.
-// Solution: shell out to xclip / xsel / wl-copy which spawn their own
-// background server and persist clipboard after we exit.
+// Clipboard backend priority:
+//   Write: wl-copy → xclip → xsel → ~/.local/share/copy/clipboard (file fallback)
+//   Read:  wl-paste → xclip → xsel → ~/.local/share/copy/clipboard (file fallback)
 //
-// Priority order for clipboard backends:
-//   Write: wl-copy  →  xclip  →  xsel
-//   Read:  wl-paste →  xclip  →  xsel
+// File fallback ensures the tool works in any terminal, SSH session,
+// or environment where $DISPLAY is unavailable or xclip cannot connect.
 
 use std::fs::{self, OpenOptions};
 use std::io::{self, IsTerminal, Read, Write};
+use std::path::PathBuf;
 use std::process::{self, Command, Stdio};
 
 use anyhow::{bail, Context, Result};
@@ -22,89 +21,114 @@ use clap::{ArgGroup, Parser};
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 const DEFAULT_MAX_BYTES: u64 = 100 * 1024 * 1024; // 100 MB
 
+// ── Clipboard file fallback path ──────────────────────────────────────────────
+
+fn clipboard_file_path() -> PathBuf {
+    let base = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
+    let dir = PathBuf::from(base).join(".local/share/copy");
+    fs::create_dir_all(&dir).ok();
+    dir.join("clipboard")
+}
+
 // ── Clipboard backend ─────────────────────────────────────────────────────────
 
 fn clipboard_write(text: &str) -> Result<()> {
+    // ── Wayland ──────────────────────────────────────────────────────────────
     if std::env::var("WAYLAND_DISPLAY").is_ok() {
-        if let Ok(mut child) = Command::new("wl-copy").stdin(Stdio::piped()).spawn() {
-            if let Some(mut stdin) = child.stdin.take() {
-                let _ = stdin.write_all(text.as_bytes());
-            }
-            if child.wait().map(|s| s.success()).unwrap_or(false) {
-                return Ok(());
-            }
-        }
-    }
-
-    if let Ok(mut child) = Command::new("xclip")
-        .args(["-selection", "clipboard"])
-        .stdin(Stdio::piped())
-        .spawn()
-    {
-        if let Some(mut stdin) = child.stdin.take() {
-            let _ = stdin.write_all(text.as_bytes());
-        }
-        if child.wait().map(|s| s.success()).unwrap_or(false) {
+        if try_write_cmd(&["wl-copy"], text) {
             return Ok(());
         }
     }
 
-    if let Ok(mut child) = Command::new("xsel")
-        .args(["--clipboard", "--input"])
-        .stdin(Stdio::piped())
-        .spawn()
-    {
-        if let Some(mut stdin) = child.stdin.take() {
-            let _ = stdin.write_all(text.as_bytes());
+    // ── X11: xclip ───────────────────────────────────────────────────────────
+    if std::env::var("DISPLAY").is_ok() {
+        if try_write_cmd(&["xclip", "-selection", "clipboard"], text) {
+            return Ok(());
         }
-        if child.wait().map(|s| s.success()).unwrap_or(false) {
+        // ── X11: xsel ────────────────────────────────────────────────────────
+        if try_write_cmd(&["xsel", "--clipboard", "--input"], text) {
             return Ok(());
         }
     }
 
-    bail!(
-        "No clipboard backend found.\n\
-         Install one of:\n\
-           X11    : sudo apt install xclip\n\
-           X11    : sudo apt install xsel\n\
-           Wayland: sudo apt install wl-clipboard"
-    )
+    // ── File fallback (always works, any terminal/SSH) ────────────────────────
+    let path = clipboard_file_path();
+    fs::write(&path, text)
+        .with_context(|| format!("Failed to write clipboard file {}", path.display()))?;
+    eprintln!("⚠ No display server — saved to clipboard file (~/.local/share/copy/clipboard)");
+    Ok(())
 }
 
 fn clipboard_read() -> Result<String> {
+    // ── Wayland ──────────────────────────────────────────────────────────────
     if std::env::var("WAYLAND_DISPLAY").is_ok() {
-        if let Ok(o) = Command::new("wl-paste").arg("--no-newline").output() {
-            if o.status.success() {
-                return Ok(String::from_utf8_lossy(&o.stdout).into_owned());
-            }
+        if let Some(s) = try_read_cmd(&["wl-paste", "--no-newline"]) {
+            return Ok(s);
         }
     }
 
-    if let Ok(o) = Command::new("xclip")
-        .args(["-selection", "clipboard", "-o"])
-        .output()
-    {
-        if o.status.success() {
-            return Ok(String::from_utf8_lossy(&o.stdout).into_owned());
+    // ── X11: xclip ───────────────────────────────────────────────────────────
+    if std::env::var("DISPLAY").is_ok() {
+        if let Some(s) = try_read_cmd(&["xclip", "-selection", "clipboard", "-o"]) {
+            return Ok(s);
+        }
+        // ── X11: xsel ────────────────────────────────────────────────────────
+        if let Some(s) = try_read_cmd(&["xsel", "--clipboard", "--output"]) {
+            return Ok(s);
         }
     }
 
-    if let Ok(o) = Command::new("xsel")
-        .args(["--clipboard", "--output"])
-        .output()
-    {
-        if o.status.success() {
-            return Ok(String::from_utf8_lossy(&o.stdout).into_owned());
-        }
+    // ── File fallback ─────────────────────────────────────────────────────────
+    let path = clipboard_file_path();
+    if path.exists() {
+        let content = fs::read_to_string(&path)
+            .with_context(|| format!("Failed to read clipboard file {}", path.display()))?;
+        eprintln!("⚠ No display server — reading from clipboard file (~/.local/share/copy/clipboard)");
+        return Ok(content);
     }
 
     bail!(
-        "Cannot read clipboard.\n\
-         Install one of:\n\
-           X11    : sudo apt install xclip\n\
-           X11    : sudo apt install xsel\n\
-           Wayland: sudo apt install wl-clipboard"
+        "Clipboard is empty.\n\
+         If you expected X11 clipboard, check:\n\
+         echo $DISPLAY          (should be :0 or :0.0)\n\
+         which xclip            (install: sudo apt install xclip)\n\
+         xclip -o               (test xclip directly)"
     )
+}
+
+// ── Backend helpers ───────────────────────────────────────────────────────────
+
+fn try_write_cmd(cmd: &[&str], text: &str) -> bool {
+    let (prog, args) = match cmd.split_first() {
+        Some(x) => x,
+        None => return false,
+    };
+    let child = Command::new(prog)
+        .args(args)
+        .stdin(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn();
+    if let Ok(mut child) = child {
+        if let Some(mut stdin) = child.stdin.take() {
+            let _ = stdin.write_all(text.as_bytes());
+        }
+        return child.wait().map(|s| s.success()).unwrap_or(false);
+    }
+    false
+}
+
+fn try_read_cmd(cmd: &[&str]) -> Option<String> {
+    let (prog, args) = cmd.split_first()?;
+    let out = Command::new(prog)
+        .args(args)
+        .stderr(Stdio::null())
+        .output()
+        .ok()?;
+    if out.status.success() && !out.stdout.is_empty() {
+        Some(String::from_utf8_lossy(&out.stdout).into_owned())
+    } else {
+        None
+    }
 }
 
 // ── CLI definition ────────────────────────────────────────────────────────────
@@ -113,9 +137,9 @@ fn clipboard_read() -> Result<String> {
 #[command(
     name = "copy",
     version = VERSION,
-    about = "copy v2.1 — File/Clipboard/Pipe Utility (Kali Linux)",
+    about = "copy v2.2 — File/Clipboard/Pipe Utility (Kali Linux)",
     long_about = "\
-copy v2.1 — File/Clipboard/Pipe Utility
+copy v2.2 — File/Clipboard/Pipe Utility
 ========================================
 Kali Linux: X11 (xclip/xsel) + Wayland (wl-clipboard)
 
@@ -342,13 +366,29 @@ fn apply_line_filters(content: &str, lines: Option<usize>, tail: Option<usize>) 
 }
 
 fn append_to_path(path: &str, content: &str) -> Result<()> {
-    let existing = fs::metadata(path).map(|m| m.len()).unwrap_or(0);
+    // Strip trailing newlines from content — xclip/wl-paste always add one
+    let trimmed = content.trim_end_matches(|c| c == '\n' || c == '\r');
+
     let mut file = OpenOptions::new().create(true).append(true).open(path)
         .with_context(|| format!("Cannot open '{path}' for appending"))?;
-    // Strip trailing newlines so we control spacing exactly — prevents double blank lines
-    // when clipboard content already ends with \n (which xclip/wl-paste always adds)
-    let trimmed = content.trim_end_matches(|c| c == '\n' || c == '\r');
-    if existing > 0 { file.write_all(b"\n").context("Write error")?; }
+
+    // Read last byte of existing file to check if it already ends with \n
+    // This avoids a blank line between entries regardless of what was written before
+    let needs_newline = {
+        let existing = fs::metadata(path).map(|m| m.len()).unwrap_or(0);
+        if existing == 0 {
+            false
+        } else {
+            use std::io::{Read, Seek, SeekFrom};
+            let mut f = fs::File::open(path).context("Cannot read existing file")?;
+            f.seek(SeekFrom::End(-1)).ok();
+            let mut last = [0u8; 1];
+            f.read_exact(&mut last).ok();
+            last[0] != b'\n'
+        }
+    };
+
+    if needs_newline { file.write_all(b"\n").context("Write error")?; }
     file.write_all(trimmed.as_bytes()).with_context(|| format!("Cannot append to '{path}'"))
 }
 
